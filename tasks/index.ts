@@ -1,6 +1,7 @@
 import './common/config.get'
 import './common/wire'
 import './evm/send'
+import './evm/deploy'
 import './solana/initConfig'
 import './solana/createOFT'
 import './solana/createOFTAdapter'
