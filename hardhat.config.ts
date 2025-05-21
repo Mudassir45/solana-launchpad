@@ -70,13 +70,28 @@ const config: HardhatUserConfig = {
             accounts,
         },
         'base-sepolia': {
-            eid: EndpointId.BASE_V2_TESTNET,
+            eid: EndpointId.BASESEP_V2_TESTNET,
             url: process.env.RPC_URL_SEPOLIA || 'https://sepolia.base.org',
+            accounts,
+        },
+        'optimism-sepolia': {
+            eid: EndpointId.OPTSEP_V2_TESTNET,
+            url: process.env.RPC_URL_SEPOLIA || 'https://opt-sepolia.g.alchemy.com/v2/YookT1zCaTk-1s0ONK18r3EZc8g2e9oC',
+            accounts,
+        },
+        'unichain-sepolia': {
+            eid: EndpointId.UNICHAIN_V2_TESTNET,
+            url: process.env.RPC_URL_SEPOLIA || 'https://unichain-sepolia.g.alchemy.com/v2/YookT1zCaTk-1s0ONK18r3EZc8g2e9oC',
             accounts,
         },
         'bsc-testnet': {
             eid: EndpointId.BSC_V2_TESTNET,
             url: process.env.RPC_URL_SEPOLIA || 'https://data-seed-prebsc-2-s2.bnbchain.org:8545',
+            accounts,
+        },
+        'mumbai': {
+            eid: EndpointId.POLYGON_V2_TESTNET,
+            url: process.env.RPC_URL_SEPOLIA || 'https://polygon-mumbai.g.alchemy.com/v2/demo',
             accounts,
         },
         hardhat: {
