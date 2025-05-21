@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import express, { Request, Response, RequestHandler } from 'express';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
@@ -7,8 +6,6 @@ import { EndpointId } from '@layerzerolabs/lz-definitions';
 import { OAppEnforcedOption, OmniPointHardhat } from '@layerzerolabs/toolbox-hardhat';
 import { ExecutorOptionType } from '@layerzerolabs/lz-v2-utilities';
 import { generateConnectionsConfig } from '@layerzerolabs/metadata-tools';
-import { Connection, Transaction, SystemProgram, PublicKey } from '@solana/web3.js';
-import { ethers } from 'ethers';
 
 const app = express();
 app.use(express.json());
@@ -18,7 +15,7 @@ const EVM_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
     {
         msgType: 1,
         optionType: ExecutorOptionType.LZ_RECEIVE,
-        gas: 80000,
+        gas: 200000,
         value: 0,
     },
 ];
@@ -59,14 +56,29 @@ const SUPPORTED_CHAINS: { [key: string]: ChainConfig } = {
         network: 'sepolia'
     },
     'base-v2-testnet': {
-        eid: EndpointId.BASE_V2_TESTNET,
+        eid: EndpointId.BASESEP_V2_TESTNET,
         name: 'Base Testnet',
         network: 'base-sepolia'
+    },
+    'optimism-sepolia': {
+        eid: EndpointId.OPTSEP_V2_TESTNET,
+        name: 'Optimism Testnet',
+        network: 'optimism-sepolia'
+    },
+    'unichain-sepolia': {
+        eid: EndpointId.UNICHAIN_V2_TESTNET,
+        name: 'Unichain Testnet',
+        network: 'unichain-sepolia'
     },
     'bsc-v2-testnet': {
         eid: EndpointId.BSC_V2_TESTNET,
         name: 'BSC Testnet',
         network: 'bsc-testnet'
+    },
+    'mumbai': {
+        eid: EndpointId.POLYGON_V2_TESTNET,
+        name: 'mumbai testnet',
+        network: 'mumbai'
     }
 };
 
@@ -104,7 +116,7 @@ import { OAppEnforcedOption, OmniPointHardhat } from '@layerzerolabs/toolbox-har
 import { getOftStoreAddress } from './tasks/solana'
 
 const solanaContract: OmniPointHardhat = {
-    eid: EndpointId.SOLANA_V2_TESTNET as EndpointId,
+    eid: EndpointId.SOLANA_V2_TESTNET,
     address: getOftStoreAddress(EndpointId.SOLANA_V2_TESTNET),
 }
 
@@ -201,154 +213,145 @@ async function runInteractiveCommandWithRetry(command: string, args: string[], m
     throw lastError;
 }
 
+// API endpoint to create a new token with cross-chain support
+const createTokenHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
+    const progress: TokenCreationProgress = {
+        step1Completed: false,
+        step2Completed: {},
+        step3Completed: false,
+        step4Completed: false
+    };
+
+    try {
+        const { mintName, mintSymbol, totalTokens, mintUri, destinationChains }: TokenCreationRequest = req.body;
+
+        // Step 1: Create Solana OFT
+        console.log('Step 1: Creating Solana OFT...');
+        try {
+            await runInteractiveCommandWithRetry('pnpm', [
+                'hardhat',
+                'lz:oft:solana:create',
+                '--eid', '40168',
+                '--program-id', 'HmN84fc4YAhvxF2WnP891XxZb3hoTL1PpjYHyiRXDCc9',
+                '--name', mintName,
+                '--symbol', mintSymbol,
+                '--amount', totalTokens,
+                '--uri', mintUri,
+                '--only-oft-store', 'true',
+                '--compute-unit-price-scale-factor', '200'
+            ]);
+            progress.step1Completed = true;
+            console.log('Step 1 completed successfully');
+        } catch (error) {
+            console.error('Step 1 failed:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Failed to create Solana OFT',
+                progress,
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+            return;
+        }
+
+        // Step 2: Deploy OFTs on destination chains
+        console.log('Step 2: Deploying OFTs on destination chains...');
+        for (const chain of destinationChains) {
+            try {
+                const chainInfo = SUPPORTED_CHAINS[chain];
+                if (!chainInfo) {
+                    throw new Error(`Unsupported chain: ${chain}`);
+                }
+                console.log(`Deploying OFT on ${chain}...`);
+                await runInteractiveCommandWithRetry('npx', ['hardhat', 'deploy', '--network', chainInfo.network, '--tags', 'MyOFT']);
+                progress.step2Completed[chain] = true;
+                console.log(`Deployment on ${chain} completed successfully`);
+            } catch (error) {
+                console.error(`Deployment on ${chain} failed:`, error);
+                res.status(500).json({
+                    success: false,
+                    error: `Failed to deploy OFT on ${chain}`,
+                    progress,
+                    details: error instanceof Error ? error.message : 'Unknown error'
+                });
+                return;
+            }
+        }
+
+        // Step 3: Update and initialize config for each network
+        console.log('Step 3: Updating and initializing config...');
+        try {
+            const solanaContract: OmniPointHardhat = {
+                eid: EndpointId.SOLANA_V2_TESTNET,
+                address: '', // This will be populated by getOftStoreAddress
+            };
+            await updateLayerZeroConfig(solanaContract, destinationChains);
+            
+            // First initialize Solana configuration
+            console.log('Initializing Solana configuration...');
+            await runInteractiveCommandWithRetry('pnpm', [
+                'hardhat',
+                'lz:oft:solana:init-config',
+                '--oapp-config',
+                'layerzero.config.ts'
+            ]);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+
+            // Then wire each network
+            for (const chain of destinationChains) {
+                const chainInfo = SUPPORTED_CHAINS[chain];
+                console.log(`Wiring configuration for ${chain}...`);
+                await runInteractiveCommandWithRetry('pnpm', [
+                    'hardhat',
+                    'lz:oapp:wire',
+                    '--oapp-config',
+                    'layerzero.config.ts',
+                    '--network',
+                    chainInfo.network
+                ]);
+                // Wait between wiring operations
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            
+            progress.step3Completed = true;
+            console.log('Step 3 completed successfully');
+        } catch (error) {
+            console.error('Step 3 failed:', error);
+            res.status(500).json({
+                success: false,
+                error: 'Failed to update and initialize config',
+                progress,
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+            return;
+        }
+
+        // Remove Step 4 since wiring is now part of Step 3
+        progress.step4Completed = true;
+
+        res.json({ 
+            success: true, 
+            message: 'Token created successfully with cross-chain support',
+            progress 
+        });
+    } catch (error: unknown) {
+        console.error('Unexpected error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Unexpected error occurred',
+            progress,
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+};
+
+app.post('/api/create-token', createTokenHandler);
+
 // API endpoint to get supported chains
 app.get('/api/supported-chains', (req: Request, res: Response) => {
     res.json(SUPPORTED_CHAINS);
 });
 
-// New endpoint to prepare Step 1 (Solana OFT creation)
-app.post('/api/prepare-step1', async (req: Request, res: Response) => {
-    try {
-        const { mintName, mintSymbol, totalTokens, mintUri, from, to } = req.body;
-        // Connect to Solana
-        const connection = new Connection('https://api.devnet.solana.com');
-        // Use provided addresses or fallback to dummy ones for testing
-        const fromPubkey = from ? new PublicKey(from) : new PublicKey('11111111111111111111111111111111');
-        const toPubkey = to ? new PublicKey(to) : new PublicKey('22222222222222222222222222222222');
-        // Fetch a recent blockhash
-        const { blockhash } = await connection.getLatestBlockhash();
-        // Example: create a dummy transaction (replace with your actual OFT logic)
-        const transaction = new Transaction().add(
-            SystemProgram.transfer({
-                fromPubkey,
-                toPubkey,
-                lamports: 1000,
-            })
-        );
-        // Set the recent blockhash
-        transaction.recentBlockhash = blockhash;
-        // Set the fee payer
-        transaction.feePayer = fromPubkey;
-        // Serialize the transaction (unsigned)
-        const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
-        res.json({ unsignedTx: serialized });
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: errorMessage });
-    }
-});
-
-// New endpoint to prepare Step 2 (EVM chain deployment)
-app.post('/api/prepare-step2', async (req: Request, res: Response) => {
-    try {
-        const { chain, to, value } = req.body;
-        const chainInfo = SUPPORTED_CHAINS[chain];
-        if (!chainInfo) {
-            return res.status(400).json({ error: `Unsupported chain: ${chain}` });
-        }
-        if (!process.env.PRIVATE_KEY) {
-            return res.status(500).json({ error: 'PRIVATE_KEY env variable not set' });
-        }
-        // Use ethers.js to create a wallet and provider with RPC URL
-        const provider = new ethers.providers.JsonRpcProvider('https://arbitrum-sepolia-rpc.publicnode.com');
-        const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-        // Prepare a simple unsigned transaction (ETH transfer as placeholder)
-        const tx = {
-            to: to || wallet.address,
-            value: value ? ethers.utils.parseEther(value) : ethers.utils.parseEther('0.001'),
-            nonce: await provider.getTransactionCount(wallet.address),
-            gasLimit: 21000,
-            chainId: (await provider.getNetwork()).chainId,
-        };
-        // Serialize unsigned transaction
-        const unsignedTx = ethers.utils.serializeTransaction(tx);
-        res.json({ unsignedTx });
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: errorMessage });
-    }
-});
-
-// New endpoint to prepare Step 3 (Config update/init)
-app.post('/api/prepare-step3', async (req: Request, res: Response) => {
-    try {
-        // For demonstration, use the same logic as step2 (ETH transfer placeholder)
-        if (!process.env.PRIVATE_KEY) {
-            return res.status(500).json({ error: 'PRIVATE_KEY env variable not set' });
-        }
-        const provider = new ethers.providers.JsonRpcProvider('https://arbitrum-sepolia-rpc.publicnode.com');
-        const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-        const tx = {
-            to: wallet.address,
-            value: ethers.utils.parseEther('0.001'),
-            nonce: await provider.getTransactionCount(wallet.address),
-            gasLimit: 21000,
-            chainId: (await provider.getNetwork()).chainId,
-        };
-        const unsignedTx = ethers.utils.serializeTransaction(tx);
-        res.json({ unsignedTx });
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: errorMessage });
-    }
-});
-
-// New endpoint to prepare Step 4 (Config wiring)
-app.post('/api/prepare-step4', async (req: Request, res: Response) => {
-    try {
-        // For demonstration, use the same logic as step2 (ETH transfer placeholder)
-        if (!process.env.PRIVATE_KEY) {
-            return res.status(500).json({ error: 'PRIVATE_KEY env variable not set' });
-        }
-        const provider = new ethers.providers.JsonRpcProvider('https://arbitrum-sepolia-rpc.publicnode.com');
-        const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-        const tx = {
-            to: wallet.address,
-            value: ethers.utils.parseEther('0.001'),
-            nonce: await provider.getTransactionCount(wallet.address),
-            gasLimit: 21000,
-            chainId: (await provider.getNetwork()).chainId,
-        };
-        const unsignedTx = ethers.utils.serializeTransaction(tx);
-        res.json({ unsignedTx });
-    } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        res.status(500).json({ error: errorMessage });
-    }
-});
-
-// New endpoint to broadcast signed transactions
-app.post('/api/broadcast', async (req: Request, res: Response) => {
-    const { signedTx } = req.body;
-
-    // If it's a hex string, treat as EVM signed tx
-    if (typeof signedTx === 'string' && signedTx.startsWith('0x')) {
-        try {
-            const provider = new ethers.providers.JsonRpcProvider('https://arbitrum-sepolia-rpc.publicnode.com');
-            const txResponse = await provider.sendTransaction(signedTx);
-            await txResponse.wait();
-            return res.json({ success: true, txHash: txResponse.hash });
-        } catch (error: any) {
-            return res.status(500).json({ success: false, error: error.message });
-        }
-    }
-
-    // Otherwise, fallback to CLI command (for Solana)
-    runInteractiveCommand(signedTx.command, signedTx.args)
-        .then(() => {
-            res.json({ success: true, message: 'Transaction broadcasted successfully' });
-        })
-        .catch((error) => {
-            res.status(500).json({ success: false, error: error.message });
-        });
-});
-
 const PORT = process.env.PORT || 3000;
-
-if (require.main === module) {
-    app.listen(PORT, () => {
-        console.log(`Server running on port ${PORT}`);
-    });
-}
-
-export default app; 
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+}); 
