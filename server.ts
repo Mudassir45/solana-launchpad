@@ -15,7 +15,7 @@ const EVM_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
     {
         msgType: 1,
         optionType: ExecutorOptionType.LZ_RECEIVE,
-        gas: 200000,
+        gas: 300000,
         value: 0,
     },
 ];
@@ -64,6 +64,16 @@ const SUPPORTED_CHAINS: { [key: string]: ChainConfig } = {
         eid: EndpointId.OPTSEP_V2_TESTNET,
         name: 'Optimism Testnet',
         network: 'optimism-sepolia'
+    },
+    'blast-sepolia': {
+        eid: EndpointId.BLAST_V2_TESTNET,
+        name: 'Blast Testnet',
+        network: 'blast-sepolia'
+    },
+    'scroll-sepolia': {
+        eid: EndpointId.SCROLL_V2_TESTNET,
+        name: 'Scroll Testnet',
+        network: 'scroll-sepolia'
     },
     'unichain-sepolia': {
         eid: EndpointId.UNICHAIN_V2_TESTNET,
@@ -158,7 +168,29 @@ export default async function () {
 // Function to run interactive commands
 function runInteractiveCommand(command: string, args: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, { stdio: 'inherit' });
+        const child = spawn(command, args, { 
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+        
+        // Handle stdout data
+        child.stdout.on('data', (data) => {
+            const chunk = data.toString();
+            console.log(chunk); // Log the output
+            
+            // Check for all known prompts
+            if (chunk.includes('You have chosen `--only-oft-store true`') ||
+                chunk.includes('Would you like to preview the transactions before continuing?') ||
+                chunk.includes('Would you like to submit the required transactions?') ||
+                chunk.includes('Continue?') ||
+                chunk.includes('(Y/n)')) {
+                child.stdin.write('yes\n');
+            }
+        });
+
+        // Handle stderr data
+        child.stderr.on('data', (data) => {
+            console.error(data.toString());
+        });
         
         child.on('close', (code) => {
             if (code === 0) {
@@ -286,7 +318,7 @@ const createTokenHandler: RequestHandler = async (req: Request, res: Response): 
             };
             await updateLayerZeroConfig(solanaContract, destinationChains);
             
-            // First initialize Solana configuration
+            // First initialize Solana configuration with explicit eid
             console.log('Initializing Solana configuration...');
             await runInteractiveCommandWithRetry('pnpm', [
                 'hardhat',
@@ -350,6 +382,69 @@ app.post('/api/create-token', createTokenHandler);
 app.get('/api/supported-chains', (req: Request, res: Response) => {
     res.json(SUPPORTED_CHAINS);
 });
+
+interface CrossChainTransferRequest {
+    fromChain: string;
+    toChain: string;
+    amount: string;
+    to: string;
+}
+
+// API endpoint for cross-chain transfers
+const crossChainTransferHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { fromChain, toChain, amount, to }: CrossChainTransferRequest = req.body;
+
+        // Validate chains
+        if (fromChain === 'solana') {
+            // Solana to EVM transfer
+            const chainInfo = SUPPORTED_CHAINS[toChain];
+            if (!chainInfo) {
+                throw new Error(`Unsupported destination chain: ${toChain}`);
+            }
+
+            await runInteractiveCommandWithRetry('pnpm', [
+                'hardhat',
+                'lz:oft:solana:send',
+                '--amount', amount,
+                '--from-eid', '40168',
+                '--to', to,
+                '--to-eid', chainInfo.eid.toString()
+            ]);
+        } else if (toChain === 'solana') {
+            // EVM to Solana transfer
+            const chainInfo = SUPPORTED_CHAINS[fromChain];
+            if (!chainInfo) {
+                throw new Error(`Unsupported source chain: ${fromChain}`);
+            }
+
+            await runInteractiveCommandWithRetry('pnpm', [
+                'hardhat',
+                '--network', chainInfo.network,
+                'send',
+                '--dst-eid', '40168',
+                '--amount', amount,
+                '--to', to
+            ]);
+        } else {
+            throw new Error('Invalid chain combination. One chain must be Solana');
+        }
+
+        res.json({
+            success: true,
+            message: 'Cross-chain transfer initiated successfully'
+        });
+    } catch (error) {
+        console.error('Cross-chain transfer failed:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to initiate cross-chain transfer',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+};
+
+app.post('/api/cross-chain-transfer', crossChainTransferHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
