@@ -26,6 +26,8 @@ interface Args {
     fromEid: EndpointId
     toEid: EndpointId
     tokenProgram: string
+    mint: string
+    escrow: string
     computeUnitPriceScaleFactor: number
 }
 
@@ -34,18 +36,20 @@ task('lz:oft:solana:send', 'Send tokens from Solana to a target EVM chain')
     .addParam('amount', 'The amount of tokens to send', undefined, devtoolsTypes.bigint)
     .addParam('fromEid', 'The source endpoint ID', undefined, devtoolsTypes.eid)
     .addParam('to', 'The recipient address on the destination chain')
+    .addParam('mint', 'The mint address on the source chain')
+    .addParam('escrow', 'The escrow address on the source chain')
     .addParam('toEid', 'The destination endpoint ID', undefined, devtoolsTypes.eid)
     .addParam('tokenProgram', 'The Token Program public key', TOKEN_PROGRAM_ID.toBase58(), devtoolsTypes.string, true)
     .addParam('computeUnitPriceScaleFactor', 'The compute unit price scale factor', 4, devtoolsTypes.float, true)
     .setAction(async (args: Args) => {
-        const { amount, fromEid, to, toEid, tokenProgram: tokenProgramStr, computeUnitPriceScaleFactor } = args
+        const { amount, fromEid, to, toEid, tokenProgram: tokenProgramStr, mint: mintStr, escrow: escrowStr, computeUnitPriceScaleFactor } = args
         const { connection, umi, umiWalletSigner } = await deriveConnection(fromEid)
 
         const solanaDeployment = getSolanaDeployment(fromEid)
 
         const oftProgramId = publicKey(solanaDeployment.programId)
-        const mint = publicKey(solanaDeployment.mint)
-        const umiEscrowPublicKey = publicKey(solanaDeployment.escrow)
+        const mint = publicKey(mintStr)
+        const umiEscrowPublicKey = publicKey(escrowStr)
         const tokenProgramId = tokenProgramStr ? publicKey(tokenProgramStr) : fromWeb3JsPublicKey(TOKEN_PROGRAM_ID)
 
         const tokenAccount = findAssociatedTokenPda(umi, {
