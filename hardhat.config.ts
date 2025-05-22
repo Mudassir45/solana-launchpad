@@ -84,6 +84,16 @@ const config: HardhatUserConfig = {
             url: process.env.RPC_URL_SEPOLIA || 'https://unichain-sepolia.g.alchemy.com/v2/YookT1zCaTk-1s0ONK18r3EZc8g2e9oC',
             accounts,
         },
+        'blast-sepolia': {
+            eid: EndpointId.BLAST_V2_TESTNET,
+            url: process.env.RPC_URL_SEPOLIA || 'https://blast-sepolia.g.alchemy.com/v2/YookT1zCaTk-1s0ONK18r3EZc8g2e9oC',
+            accounts,
+        },
+        'scroll-sepolia': {
+            eid: EndpointId.SCROLL_V2_TESTNET,
+            url: process.env.RPC_URL_SEPOLIA || 'https://scroll-sepolia.g.alchemy.com/v2/YookT1zCaTk-1s0ONK18r3EZc8g2e9oC',
+            accounts,
+        },
         'bsc-testnet': {
             eid: EndpointId.BSC_V2_TESTNET,
             url: process.env.RPC_URL_SEPOLIA || 'https://data-seed-prebsc-2-s2.bnbchain.org:8545',

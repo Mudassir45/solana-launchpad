@@ -13,6 +13,16 @@ const solanaContract: OmniPointHardhat = {
 
 
 const chain0: OmniPointHardhat = {
+    eid: 40231,
+    contractName: 'MyOFT',
+}
+
+const chain1: OmniPointHardhat = {
+    eid: 40102,
+    contractName: 'MyOFT',
+}
+
+const chain2: OmniPointHardhat = {
     eid: 40232,
     contractName: 'MyOFT',
 }
@@ -21,7 +31,7 @@ const EVM_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
     {
         "msgType": 1,
         "optionType": 1,
-        "gas": 200000,
+        "gas": 300000,
         "value": 0
     }
 ]
@@ -45,12 +55,30 @@ export default async function () {
             [15, 32],
             [SOLANA_ENFORCED_OPTIONS, EVM_ENFORCED_OPTIONS],
         ],
+
+        [
+            chain1,
+            solanaContract,
+            [['LayerZero Labs'], []],
+            [15, 32],
+            [SOLANA_ENFORCED_OPTIONS, EVM_ENFORCED_OPTIONS],
+        ],
+
+        [
+            chain2,
+            solanaContract,
+            [['LayerZero Labs'], []],
+            [15, 32],
+            [SOLANA_ENFORCED_OPTIONS, EVM_ENFORCED_OPTIONS],
+        ],
     ])
 
     return {
         contracts: [
             { contract: solanaContract },
-            { contract: chain0 }
+            { contract: chain0 },
+            { contract: chain1 },
+            { contract: chain2 }
         ],
         connections,
     }
