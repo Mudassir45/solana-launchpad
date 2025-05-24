@@ -99,11 +99,6 @@ const config: HardhatUserConfig = {
             url: process.env.RPC_URL_SEPOLIA || 'https://data-seed-prebsc-2-s2.bnbchain.org:8545',
             accounts,
         },
-        'mumbai': {
-            eid: EndpointId.POLYGON_V2_TESTNET,
-            url: process.env.RPC_URL_SEPOLIA || 'https://polygon-mumbai.g.alchemy.com/v2/demo',
-            accounts,
-        },
         hardhat: {
             // Need this for testing because TestHelperOz5.sol is exceeding the compiled contract size limit
             allowUnlimitedContractSize: true,
