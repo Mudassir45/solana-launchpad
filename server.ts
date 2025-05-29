@@ -15,6 +15,14 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
+// Add logging middleware
+app.use((req, res, next) => {
+    console.log('\n=== REQUEST ===');
+    console.log(`${req.method} ${req.url}`);
+    console.log('Body:', req.body);
+    next();
+});
+
 // Constants for configuration
 const EVM_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
     {
@@ -50,6 +58,11 @@ interface ChainConfig {
 
 // Supported chains configuration
 const SUPPORTED_CHAINS: { [key: string]: ChainConfig } = {
+    'arbitrum': {
+        eid: EndpointId.ARBITRUM_V2_MAINNET,
+        name: 'Arbitrum One',
+        network: 'arbitrum'
+    },
     'arbitrum-sepolia': {
         eid: EndpointId.ARBSEP_V2_TESTNET,
         name: 'Arbitrum Sepolia',
@@ -118,6 +131,11 @@ const LIFI_CHAINS: LiFiChains = {
         chainId: 8453,
         rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
         name: 'Base'
+    },
+    'solana': {
+        chainId: 1151111081099710,
+        rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+        name: 'Solana'
     }
 };
 
@@ -481,17 +499,26 @@ interface LiFiBridgeRequest {
     fromToken: string;
     toToken: string;
     amount: string;
+    to?: string;
 }
 
 // API endpoint for Li.Fi bridging
 const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { fromChain, toChain, fromToken, toToken, amount }: LiFiBridgeRequest = req.body;
+        console.log('\n=== LI.FI BRIDGE REQUEST ===');
+        const { fromChain, toChain, fromToken, toToken, amount, to }: LiFiBridgeRequest = req.body;
+        console.log('Request parameters:', { fromChain, toChain, fromToken, toToken, amount, to });
 
         // Validate chains
         if (!LIFI_CHAINS[fromChain] || !LIFI_CHAINS[toChain]) {
+            console.error('Invalid chain combination:', { fromChain, toChain });
             throw new Error('Invalid chain combination. Both chains must be supported by Li.Fi');
         }
+
+        console.log('Chain configurations:', {
+            fromChain: LIFI_CHAINS[fromChain],
+            toChain: LIFI_CHAINS[toChain]
+        });
 
         // Initialize Li.Fi bridge for the source chain
         const bridge = new LiFiBridge(
@@ -500,18 +527,23 @@ const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): P
             LIFI_CHAINS[fromChain].chainId
         );
 
+        console.log('Initializing bridge...');
         // Initialize the bridge with chain and token information
         await bridge.initialize();
+        console.log('Bridge initialized successfully');
 
+        console.log('Executing bridge transaction...');
         // Execute the bridge transaction
         const result = await bridge.bridge(
             fromChain,
             toChain,
             fromToken,
             toToken,
-            amount
+            amount,
+            to
         );
 
+        console.log('Bridge transaction successful:', result);
         res.json({
             success: true,
             message: 'Bridge transaction initiated successfully',
@@ -519,7 +551,8 @@ const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): P
             status: result.status
         });
     } catch (error) {
-        console.error('Li.Fi bridge transaction failed:', error);
+        console.error('\n=== LI.FI BRIDGE ERROR ===');
+        console.error('Error details:', error);
         res.status(500).json({
             success: false,
             error: 'Failed to initiate bridge transaction',
@@ -529,6 +562,27 @@ const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): P
 };
 
 app.post('/api/li-fi-bridge', liFiBridgeHandler);
+
+// API endpoint for Li.Fi connections
+app.get('/api/li-fi-connections', async (req: Request, res: Response) => {
+    try {
+        const { fromChain, toChain, fromToken, toToken, chainTypes } = req.query;
+        const connections = await LiFiBridge.getConnections({
+            fromChain: fromChain as string | undefined,
+            toChain: toChain as string | undefined,
+            fromToken: fromToken as string | undefined,
+            toToken: toToken as string | undefined,
+            chainTypes: chainTypes as string | undefined || 'EVM,SVM',
+        });
+        res.json({ success: true, connections });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch Li.Fi connections',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
