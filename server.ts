@@ -6,6 +6,11 @@ import { EndpointId } from '@layerzerolabs/lz-definitions';
 import { OAppEnforcedOption, OmniPointHardhat } from '@layerzerolabs/toolbox-hardhat';
 import { ExecutorOptionType } from '@layerzerolabs/lz-v2-utilities';
 import { generateConnectionsConfig } from '@layerzerolabs/metadata-tools';
+import { LiFiBridge } from './src/li-fi-bridge';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
 app.use(express.json());
@@ -89,6 +94,30 @@ const SUPPORTED_CHAINS: { [key: string]: ChainConfig } = {
         eid: EndpointId.POLYGON_V2_TESTNET,
         name: 'mumbai testnet',
         network: 'mumbai'
+    }
+};
+
+interface LiFiChainConfig {
+    chainId: number;
+    rpcUrl: string;
+    name: string;
+}
+
+interface LiFiChains {
+    [key: string]: LiFiChainConfig;
+}
+
+// Add Li.Fi chain configurations
+const LIFI_CHAINS: LiFiChains = {
+    'arbitrum': {
+        chainId: 42161,
+        rpcUrl: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+        name: 'Arbitrum One'
+    },
+    'base': {
+        chainId: 8453,
+        rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+        name: 'Base'
     }
 };
 
@@ -420,14 +449,14 @@ const crossChainTransferHandler: RequestHandler = async (req: Request, res: Resp
 
             await runInteractiveCommandWithRetry('pnpm', [
                 'hardhat',
-                '--network', chainInfo.network,
-                'send',
-                '--dst-eid', '40168',
+                'lz:oft:evm:send',
                 '--amount', amount,
-                '--to', to
+                '--from-eid', chainInfo.eid.toString(),
+                '--to', to,
+                '--to-eid', '40168'
             ]);
         } else {
-            throw new Error('Invalid chain combination. One chain must be Solana');
+            throw new Error('Unsupported chain combination. Only Solana to EVM or EVM to Solana transfers are supported.');
         }
 
         res.json({
@@ -446,7 +475,62 @@ const crossChainTransferHandler: RequestHandler = async (req: Request, res: Resp
 
 app.post('/api/cross-chain-transfer', crossChainTransferHandler);
 
+interface LiFiBridgeRequest {
+    fromChain: string;
+    toChain: string;
+    fromToken: string;
+    toToken: string;
+    amount: string;
+}
+
+// API endpoint for Li.Fi bridging
+const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { fromChain, toChain, fromToken, toToken, amount }: LiFiBridgeRequest = req.body;
+
+        // Validate chains
+        if (!LIFI_CHAINS[fromChain] || !LIFI_CHAINS[toChain]) {
+            throw new Error('Invalid chain combination. Both chains must be supported by Li.Fi');
+        }
+
+        // Initialize Li.Fi bridge for the source chain
+        const bridge = new LiFiBridge(
+            LIFI_CHAINS[fromChain].rpcUrl,
+            process.env.PRIVATE_KEY || '',
+            LIFI_CHAINS[fromChain].chainId
+        );
+
+        // Initialize the bridge with chain and token information
+        await bridge.initialize();
+
+        // Execute the bridge transaction
+        const result = await bridge.bridge(
+            fromChain,
+            toChain,
+            fromToken,
+            toToken,
+            amount
+        );
+
+        res.json({
+            success: true,
+            message: 'Bridge transaction initiated successfully',
+            txHash: result.txHash,
+            status: result.status
+        });
+    } catch (error) {
+        console.error('Li.Fi bridge transaction failed:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to initiate bridge transaction',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+};
+
+app.post('/api/li-fi-bridge', liFiBridgeHandler);
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-}); 
+});
