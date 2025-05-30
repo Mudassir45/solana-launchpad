@@ -122,17 +122,17 @@ interface LiFiChains {
 
 // Add Li.Fi chain configurations
 const LIFI_CHAINS: LiFiChains = {
-    'arbitrum': {
+    '42161': {  // Arbitrum
         chainId: 42161,
         rpcUrl: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
         name: 'Arbitrum One'
     },
-    'base': {
+    '8453': {   // Base
         chainId: 8453,
         rpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
         name: 'Base'
     },
-    'solana': {
+    '1151111081099710': {  // Solana
         chainId: 1151111081099710,
         rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
         name: 'Solana'
@@ -467,25 +467,22 @@ const crossChainTransferHandler: RequestHandler = async (req: Request, res: Resp
 
             await runInteractiveCommandWithRetry('pnpm', [
                 'hardhat',
-                'lz:oft:evm:send',
+                'lz:oft:solana:send',
                 '--amount', amount,
                 '--from-eid', chainInfo.eid.toString(),
                 '--to', to,
                 '--to-eid', '40168'
             ]);
         } else {
-            throw new Error('Unsupported chain combination. Only Solana to EVM or EVM to Solana transfers are supported.');
+            throw new Error(`Unsupported transfer direction: from ${fromChain} to ${toChain}`);
         }
 
-        res.json({
-            success: true,
-            message: 'Cross-chain transfer initiated successfully'
-        });
-    } catch (error) {
+        res.json({ success: true, message: 'Cross-chain transfer initiated successfully' });
+    } catch (error: unknown) {
         console.error('Cross-chain transfer failed:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to initiate cross-chain transfer',
+        res.status(500).json({ 
+            success: false, 
+            error: 'Cross-chain transfer failed',
             details: error instanceof Error ? error.message : 'Unknown error'
         });
     }
@@ -494,37 +491,43 @@ const crossChainTransferHandler: RequestHandler = async (req: Request, res: Resp
 app.post('/api/cross-chain-transfer', crossChainTransferHandler);
 
 interface LiFiBridgeRequest {
-    fromChain: string;
-    toChain: string;
-    fromToken: string;
-    toToken: string;
-    amount: string;
-    to?: string;
+    fromChain: string;  // Chain ID (e.g., "42161" for Arbitrum)
+    toChain: string;    // Chain ID (e.g., "1151111081099710" for Solana)
+    fromToken: string;  // Token address or symbol
+    toToken: string;    // Token address or symbol
+    amount: string;     // Amount in wei
+    to?: string;        // Optional destination address
 }
 
-// API endpoint for Li.Fi bridging
+// Li.Fi bridge handler
 const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
     try {
         console.log('\n=== LI.FI BRIDGE REQUEST ===');
         const { fromChain, toChain, fromToken, toToken, amount, to }: LiFiBridgeRequest = req.body;
         console.log('Request parameters:', { fromChain, toChain, fromToken, toToken, amount, to });
 
-        // Validate chains
-        if (!LIFI_CHAINS[fromChain] || !LIFI_CHAINS[toChain]) {
-            console.error('Invalid chain combination:', { fromChain, toChain });
-            throw new Error('Invalid chain combination. Both chains must be supported by Li.Fi');
+        // Validate chain IDs
+        if (!fromChain || !toChain) {
+            console.error('Invalid chain IDs:', { fromChain, toChain });
+            throw new Error('Invalid chain IDs. Both fromChain and toChain must be provided');
         }
 
-        console.log('Chain configurations:', {
-            fromChain: LIFI_CHAINS[fromChain],
-            toChain: LIFI_CHAINS[toChain]
+        // Get RPC URL and chain ID for the source chain
+        const sourceChainConfig = LIFI_CHAINS[fromChain];
+        if (!sourceChainConfig) {
+            console.error('Unsupported source chain:', fromChain);
+            throw new Error(`Unsupported source chain: ${fromChain}`);
+        }
+
+        console.log('Chain configuration:', {
+            fromChain: sourceChainConfig
         });
 
         // Initialize Li.Fi bridge for the source chain
         const bridge = new LiFiBridge(
-            LIFI_CHAINS[fromChain].rpcUrl,
+            sourceChainConfig.rpcUrl,
             process.env.PRIVATE_KEY || '',
-            LIFI_CHAINS[fromChain].chainId
+            sourceChainConfig.chainId
         );
 
         console.log('Initializing bridge...');
@@ -561,30 +564,9 @@ const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): P
     }
 };
 
+// Add Li.Fi bridge endpoint
 app.post('/api/li-fi-bridge', liFiBridgeHandler);
 
-// API endpoint for Li.Fi connections
-app.get('/api/li-fi-connections', async (req: Request, res: Response) => {
-    try {
-        const { fromChain, toChain, fromToken, toToken, chainTypes } = req.query;
-        const connections = await LiFiBridge.getConnections({
-            fromChain: fromChain as string | undefined,
-            toChain: toChain as string | undefined,
-            fromToken: fromToken as string | undefined,
-            toToken: toToken as string | undefined,
-            chainTypes: chainTypes as string | undefined || 'EVM,SVM',
-        });
-        res.json({ success: true, connections });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: 'Failed to fetch Li.Fi connections',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        });
-    }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+app.listen(3000, () => {
+    console.log('Server is running on port 3000');
 });

@@ -138,6 +138,11 @@ export class LiFiBridge {
     }
 
     private getChainKey(chainName: string): string {
+        // Special case for Solana
+        if (chainName.toLowerCase() === 'sol' || chainName.toLowerCase() === 'solana') {
+            return 'sol';
+        }
+
         const chain = Array.from(this.chains.values()).find(c => 
             c.name.toLowerCase() === chainName.toLowerCase() || 
             c.key.toLowerCase() === chainName.toLowerCase()
@@ -151,6 +156,11 @@ export class LiFiBridge {
     }
 
     private getChainId(chainName: string): number {
+        // Special case for Solana
+        if (chainName.toLowerCase() === 'sol' || chainName.toLowerCase() === 'solana') {
+            return 1151111081099710;
+        }
+
         const chain = Array.from(this.chains.values()).find(c => 
             c.name.toLowerCase() === chainName.toLowerCase() || 
             c.key.toLowerCase() === chainName.toLowerCase()
@@ -297,56 +307,27 @@ export class LiFiBridge {
                 to
             });
 
-            // For Arbitrum to Solana transfers, use direct values
-            let fromChainId = fromChain;
-            let toChainId = toChain;
-            let fromTokenAddress = fromToken;
-            let toTokenAddress = toToken;
+            // Initialize variables for chain and token values
+            let fromChainId: string;
+            let toChainId: string;
+            let fromTokenAddress: string;
+            let toTokenAddress: string;
 
-            // If not using direct values, fetch and map as before
-            if (fromChain.toLowerCase() !== 'arbitrum' || toChain.toLowerCase() !== 'solana') {
-                console.log('Fetching chain and token information...');
-                const [chainsResponse, tokensResponse] = await Promise.all([
-                    axios.get(`${API_URL}/chains`),
-                    axios.get(`${API_URL}/tokens`)
-                ]);
+            // Handle chain IDs directly
+            fromChainId = fromChain;
+            toChainId = toChain;
 
-                // Create maps and get IDs as before
-                const chainIdMap = new Map<string, string>();
-                chainsResponse.data.chains.forEach((chain: any) => {
-                    chainIdMap.set(chain.key.toLowerCase(), chain.id.toString());
-                    chainIdMap.set(chain.name.toLowerCase(), chain.id.toString());
-                });
-
-                const tokenAddressMap = new Map<string, Map<string, string>>();
-                Object.entries(tokensResponse.data.tokens).forEach(([chainId, tokens]: [string, any]) => {
-                    const chainTokens = new Map<string, string>();
-                    tokens.forEach((token: any) => {
-                        chainTokens.set(token.symbol.toLowerCase(), token.address);
-                        chainTokens.set(token.address.toLowerCase(), token.address);
-                    });
-                    tokenAddressMap.set(chainId, chainTokens);
-                });
-
-                fromChainId = chainIdMap.get(fromChain.toLowerCase()) || fromChain;
-                toChainId = chainIdMap.get(toChain.toLowerCase()) || toChain;
-
-                const fromChainTokens = tokenAddressMap.get(fromChainId);
-                const toChainTokens = tokenAddressMap.get(toChainId);
-
-                if (fromChainTokens) {
-                    fromTokenAddress = fromChainTokens.get(fromToken.toLowerCase()) || fromToken;
-                }
-                if (toChainTokens) {
-                    toTokenAddress = toChainTokens.get(toToken.toLowerCase()) || toToken;
-                }
-            } else {
-                console.log('Using direct values for Arbitrum to Solana transfer');
-                // For Arbitrum to Solana, use the known values
-                fromChainId = '42161';
-                toChainId = '1151111081099710';
+            // Handle token addresses
+            if (fromToken.toLowerCase() === 'eth' || fromToken === '0x0000000000000000000000000000000000000000') {
                 fromTokenAddress = '0x0000000000000000000000000000000000000000';
+            } else {
+                fromTokenAddress = fromToken;
+            }
+
+            if (toToken.toLowerCase() === 'sol' || toToken === '11111111111111111111111111111111') {
                 toTokenAddress = '11111111111111111111111111111111';
+            } else {
+                toTokenAddress = toToken;
             }
 
             console.log('\n=== MAPPED VALUES ===');
@@ -360,7 +341,7 @@ export class LiFiBridge {
             });
 
             // If this is a Solana destination, format the address
-            const destinationAddress = to ? (toChain.toLowerCase() === 'solana' ? this.formatSolanaAddress(to) : to) : this.wallet.address;
+            const destinationAddress = to ? (toChain === '1151111081099710' ? this.formatSolanaAddress(to) : to) : this.wallet.address;
             console.log('Destination Address:', destinationAddress);
 
             // Get quote with destination address for Solana
@@ -408,16 +389,34 @@ export class LiFiBridge {
                 );
             }
 
-            // Prepare transaction
+            // Prepare transaction with proper gas settings
+            const feeData = await this.provider.getFeeData();
+            console.log('Current fee data:', {
+                maxFeePerGas: feeData.maxFeePerGas?.toString(),
+                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString(),
+                gasPrice: feeData.gasPrice?.toString()
+            });
+
             const tx = {
                 ...quote.transactionRequest,
-                from: this.wallet.address
+                from: this.wallet.address,
+                maxFeePerGas: feeData.maxFeePerGas?.mul(120).div(100), // Add 20% buffer
+                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.mul(120).div(100), // Add 20% buffer
+                gasLimit: 500000 // Set a higher gas limit for Arbitrum
             };
+
+            // Remove any legacy gas price if it exists
+            if ('gasPrice' in tx) {
+                delete tx.gasPrice;
+            }
 
             console.log('\n=== PREPARED TRANSACTION ===');
             console.log('Transaction details:', {
                 to: tx.to,
                 value: tx.value,
+                maxFeePerGas: tx.maxFeePerGas?.toString(),
+                maxPriorityFeePerGas: tx.maxPriorityFeePerGas?.toString(),
+                gasLimit: tx.gasLimit,
                 data: tx.data ? `${tx.data.substring(0, 66)}...` : undefined,
                 from: tx.from
             });
@@ -549,6 +548,70 @@ export class LiFiBridge {
         } catch (error) {
             console.error('Li.Fi connections error:', error);
             throw new Error(`Failed to fetch Li.Fi connections: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    static async testMappings(fromChain: string, toChain: string, fromToken: string, toToken: string): Promise<any> {
+        try {
+            console.log('\n=== TESTING MAPPINGS ===');
+            console.log('Input:', { fromChain, toChain, fromToken, toToken });
+
+            // Fetch chain and token information
+            const [chainsResponse, tokensResponse] = await Promise.all([
+                axios.get(`${API_URL}/chains`),
+                axios.get(`${API_URL}/tokens`)
+            ]);
+
+            // Create maps for chain and token lookups
+            const chainIdMap = new Map<string, string>();
+            chainsResponse.data.chains.forEach((chain: any) => {
+                chainIdMap.set(chain.key.toLowerCase(), chain.id.toString());
+                chainIdMap.set(chain.name.toLowerCase(), chain.id.toString());
+            });
+
+            const tokenAddressMap = new Map<string, Map<string, string>>();
+            Object.entries(tokensResponse.data.tokens).forEach(([chainId, tokens]: [string, any]) => {
+                const chainTokens = new Map<string, string>();
+                tokens.forEach((token: any) => {
+                    chainTokens.set(token.symbol.toLowerCase(), token.address);
+                    chainTokens.set(token.address.toLowerCase(), token.address);
+                });
+                tokenAddressMap.set(chainId, chainTokens);
+            });
+
+            // Map chain names to IDs
+            const fromChainId = chainIdMap.get(fromChain.toLowerCase());
+            const toChainId = chainIdMap.get(toChain.toLowerCase());
+
+            // Map token symbols to addresses
+            const fromChainTokens = fromChainId ? tokenAddressMap.get(fromChainId) : undefined;
+            const toChainTokens = toChainId ? tokenAddressMap.get(toChainId) : undefined;
+
+            const fromTokenAddress = fromChainTokens?.get(fromToken.toLowerCase());
+            const toTokenAddress = toChainTokens?.get(toToken.toLowerCase());
+
+            return {
+                chainMappings: {
+                    fromChain,
+                    toChain,
+                    fromChainId,
+                    toChainId
+                },
+                tokenMappings: {
+                    fromToken,
+                    toToken,
+                    fromTokenAddress,
+                    toTokenAddress
+                },
+                availableChains: Array.from(chainIdMap.entries()),
+                availableTokens: {
+                    fromChain: fromChainTokens ? Array.from(fromChainTokens.keys()) : [],
+                    toChain: toChainTokens ? Array.from(toChainTokens.keys()) : []
+                }
+            };
+        } catch (error) {
+            console.error('Test mappings error:', error);
+            throw error;
         }
     }
 } 
