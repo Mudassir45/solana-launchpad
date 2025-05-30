@@ -497,14 +497,15 @@ interface LiFiBridgeRequest {
     toToken: string;    // Token address or symbol
     amount: string;     // Amount in wei
     to?: string;        // Optional destination address
+    fromAddress: string; // Added fromAddress parameter
 }
 
 // Li.Fi bridge handler
 const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
     try {
         console.log('\n=== LI.FI BRIDGE REQUEST ===');
-        const { fromChain, toChain, fromToken, toToken, amount, to }: LiFiBridgeRequest = req.body;
-        console.log('Request parameters:', { fromChain, toChain, fromToken, toToken, amount, to });
+        const { fromChain, toChain, fromToken, toToken, amount, to, fromAddress }: LiFiBridgeRequest = req.body;
+        console.log('Request parameters:', { fromChain, toChain, fromToken, toToken, amount, to, fromAddress });
 
         // Validate chain IDs
         if (!fromChain || !toChain) {
@@ -543,7 +544,8 @@ const liFiBridgeHandler: RequestHandler = async (req: Request, res: Response): P
             fromToken,
             toToken,
             amount,
-            to
+            to,
+            fromAddress
         );
 
         console.log('Bridge transaction successful:', result);

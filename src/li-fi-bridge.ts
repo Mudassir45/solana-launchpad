@@ -1,5 +1,8 @@
 import { ethers } from 'ethers';
 import axios from 'axios';
+import { Keypair, Connection, PublicKey, Transaction, sendAndConfirmTransaction, VersionedTransaction } from '@solana/web3.js';
+import bs58 from 'bs58';
+import bigInt from 'big-integer';
 
 const API_URL = 'https://li.quest/v1';
 
@@ -93,6 +96,8 @@ interface LiFiStatus {
 export class LiFiBridge {
     private provider: ethers.providers.JsonRpcProvider;
     private wallet: ethers.Wallet;
+    private solanaWallet: Keypair;
+    private solanaConnection: Connection;
     private chains: Map<string, LiFiChain> = new Map();
     private tokens: Map<number, Map<string, LiFiToken>> = new Map();
 
@@ -101,8 +106,44 @@ export class LiFiBridge {
         private readonly privateKey: string,
         private readonly chainId: number
     ) {
-        this.provider = new ethers.providers.JsonRpcProvider(rpcUrl, chainId);
+        // Initialize EVM provider (for Arbitrum)
+        if (!process.env.ARBITRUM_RPC_URL) {
+            throw new Error('ARBITRUM_RPC_URL environment variable is not set');
+        }
+        this.provider = new ethers.providers.JsonRpcProvider(process.env.ARBITRUM_RPC_URL, {
+            chainId: 42161,
+            name: 'arbitrum',
+            ensAddress: undefined // Disable ENS resolution
+        });
         this.wallet = new ethers.Wallet(privateKey, this.provider);
+        
+        // Initialize Solana wallet from private key
+        const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
+        console.log('\n=== SOLANA WALLET INITIALIZATION ===');
+        console.log('Solana private key exists:', !!solanaPrivateKey);
+        if (solanaPrivateKey) {
+            console.log('Private key length:', solanaPrivateKey.length);
+            try {
+                // Decode base58 private key
+                const decodedKey = bs58.decode(solanaPrivateKey);
+                console.log('Decoded key length:', decodedKey.length);
+                this.solanaWallet = Keypair.fromSecretKey(decodedKey);
+                console.log('Solana wallet public key:', this.solanaWallet.publicKey.toString());
+            } catch (error) {
+                console.error('Error initializing Solana wallet:', error);
+                throw new Error(`Failed to initialize Solana wallet: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+        } else {
+            throw new Error('SOLANA_PRIVATE_KEY environment variable is not set');
+        }
+        
+        // Initialize Solana connection
+        if (!process.env.SOLANA_RPC_URL) {
+            throw new Error('SOLANA_RPC_URL environment variable is not set');
+        }
+        this.solanaConnection = new Connection(process.env.SOLANA_RPC_URL);
+        console.log('Solana RPC URL:', process.env.SOLANA_RPC_URL);
+        console.log('Arbitrum RPC URL:', process.env.ARBITRUM_RPC_URL);
     }
 
     async initialize(): Promise<void> {
@@ -230,6 +271,9 @@ export class LiFiBridge {
             // Add toAddress for Solana transfers
             if (toChain === '1151111081099710' && toAddress) {
                 params.toAddress = toAddress;
+            } else if (fromChain === '1151111081099710' && toAddress) {
+                // For Solana to EVM transfers, use the EVM address as toAddress
+                params.toAddress = toAddress;
             }
 
             console.log('Getting quote with params:', params);
@@ -263,15 +307,16 @@ export class LiFiBridge {
     }
 
     async checkAndSetAllowance(tokenAddress: string, approvalAddress: string, amount: string): Promise<void> {
+        // Skip approval for native token or Solana tokens
+        if (tokenAddress === ethers.constants.AddressZero || tokenAddress === '11111111111111111111111111111111') {
+            console.log('Skipping approval for native/Solana token');
+            return;
+        }
+
         const ERC20_ABI = [
             'function allowance(address,address) external view returns (uint256)',
             'function approve(address, uint256) external'
         ];
-
-        // Skip approval for native token
-        if (tokenAddress === ethers.constants.AddressZero) {
-            return;
-        }
 
         const erc20 = new ethers.Contract(tokenAddress, ERC20_ABI, this.wallet);
         const allowance = await erc20.allowance(await this.wallet.getAddress(), approvalAddress);
@@ -294,7 +339,8 @@ export class LiFiBridge {
         fromToken: string,
         toToken: string,
         fromAmount: string,
-        to?: string
+        to?: string,
+        fromAddress?: string
     ): Promise<{ txHash: string; status: LiFiStatus }> {
         try {
             console.log('\n=== BRIDGE REQUEST START ===');
@@ -304,7 +350,8 @@ export class LiFiBridge {
                 fromToken,
                 toToken,
                 fromAmount,
-                to
+                to,
+                fromAddress
             });
 
             // Initialize variables for chain and token values
@@ -352,7 +399,7 @@ export class LiFiBridge {
                 fromTokenAddress,
                 toTokenAddress,
                 fromAmount,
-                fromAddress: this.wallet.address,
+                fromAddress: fromAddress || this.wallet.address,
                 toAddress: destinationAddress
             };
             console.log('Quote parameters:', quoteParams);
@@ -363,7 +410,7 @@ export class LiFiBridge {
                 fromTokenAddress,
                 toTokenAddress,
                 fromAmount,
-                this.wallet.address,
+                fromAddress || this.wallet.address,
                 destinationAddress
             );
 
@@ -389,59 +436,107 @@ export class LiFiBridge {
                 );
             }
 
-            // Prepare transaction with proper gas settings
-            const feeData = await this.provider.getFeeData();
-            console.log('Current fee data:', {
-                maxFeePerGas: feeData.maxFeePerGas?.toString(),
-                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString(),
-                gasPrice: feeData.gasPrice?.toString()
-            });
+            let txHash: string;
+            let status: LiFiStatus;
 
-            const tx = {
-                ...quote.transactionRequest,
-                from: this.wallet.address,
-                maxFeePerGas: feeData.maxFeePerGas?.mul(120).div(100), // Add 20% buffer
-                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.mul(120).div(100), // Add 20% buffer
-                gasLimit: 500000 // Set a higher gas limit for Arbitrum
-            };
+            // Handle Solana to EVM bridge
+            if (fromChain === '1151111081099710') {
+                console.log('\n=== EXECUTING SOLANA TO EVM BRIDGE ===');
+                console.log('Full quote object:', JSON.stringify(quote, null, 2));
+                console.log('Transaction request:', JSON.stringify(quote.transactionRequest, null, 2));
+                
+                // Decode the base64 transaction data from Li.Fi
+                const transactionData = Buffer.from(quote.transactionRequest.data, 'base64');
+                console.log('Decoded transaction data length:', transactionData.length);
+                
+                // Create a versioned transaction from the decoded data
+                const transaction = VersionedTransaction.deserialize(transactionData);
+                
+                // Refresh the blockhash
+                const { blockhash } = await this.solanaConnection.getLatestBlockhash();
+                transaction.message.recentBlockhash = blockhash;
+                console.log('Refreshed blockhash:', blockhash);
+                
+                // Sign the transaction
+                transaction.sign([this.solanaWallet]);
+                
+                // Send the transaction
+                const signature = await this.solanaConnection.sendRawTransaction(transaction.serialize());
+                console.log('Solana transaction sent:', signature);
+                
+                // Wait for confirmation
+                await this.solanaConnection.confirmTransaction(signature);
+                console.log('Solana transaction confirmed:', signature);
 
-            // Remove any legacy gas price if it exists
-            if ('gasPrice' in tx) {
-                delete tx.gasPrice;
+                txHash = signature;
+            } else {
+                // Handle EVM to EVM or EVM to Solana bridge
+                console.log('\n=== EXECUTING EVM BRIDGE ===');
+                // Prepare transaction with proper gas settings
+                const feeData = await this.provider.getFeeData();
+                console.log('Current fee data:', {
+                    maxFeePerGas: feeData.maxFeePerGas?.toString(),
+                    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString(),
+                    gasPrice: feeData.gasPrice?.toString()
+                });
+
+                const tx = {
+                    ...quote.transactionRequest,
+                    from: this.wallet.address,
+                    maxFeePerGas: feeData.maxFeePerGas?.mul(120).div(100), // Add 20% buffer
+                    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.mul(120).div(100), // Add 20% buffer
+                    gasLimit: 500000 // Set a higher gas limit for Arbitrum
+                };
+
+                // Remove any legacy gas price if it exists
+                if ('gasPrice' in tx) {
+                    delete tx.gasPrice;
+                }
+
+                // Log and validate all EVM addresses
+                const addressesToCheck = [tx.to, tx.from, quote.estimate.approvalAddress].filter(Boolean);
+                addressesToCheck.forEach((address, idx) => {
+                    console.log(`EVM address [${idx}]:`, address);
+                    if (!ethers.utils.isAddress(address)) {
+                        console.warn(`Address [${address}] is not a valid hex address!`);
+                    }
+                });
+
+                console.log('\n=== PREPARED TRANSACTION ===');
+                console.log('Transaction details:', {
+                    to: tx.to,
+                    value: tx.value,
+                    maxFeePerGas: tx.maxFeePerGas?.toString(),
+                    maxPriorityFeePerGas: tx.maxPriorityFeePerGas?.toString(),
+                    gasLimit: tx.gasLimit,
+                    data: tx.data ? `${tx.data.substring(0, 66)}...` : undefined,
+                    from: tx.from
+                });
+
+                // Send transaction
+                console.log('\n=== SENDING TRANSACTION ===');
+                const transaction = await this.wallet.sendTransaction(tx);
+                console.log('Transaction sent:', transaction.hash);
+                
+                const receipt = await transaction.wait();
+                console.log('Transaction confirmed:', receipt.transactionHash);
+
+                txHash = receipt.transactionHash;
             }
 
-            console.log('\n=== PREPARED TRANSACTION ===');
-            console.log('Transaction details:', {
-                to: tx.to,
-                value: tx.value,
-                maxFeePerGas: tx.maxFeePerGas?.toString(),
-                maxPriorityFeePerGas: tx.maxPriorityFeePerGas?.toString(),
-                gasLimit: tx.gasLimit,
-                data: tx.data ? `${tx.data.substring(0, 66)}...` : undefined,
-                from: tx.from
-            });
-
-            // Send transaction
-            console.log('\n=== SENDING TRANSACTION ===');
-            const transaction = await this.wallet.sendTransaction(tx);
-            console.log('Transaction sent:', transaction.hash);
-            
-            const receipt = await transaction.wait();
-            console.log('Transaction confirmed:', receipt.transactionHash);
-
             // Get status
-            const status = await this.getStatus(
+            status = await this.getStatus(
                 quote.tool,
                 fromChainId,
                 toChainId,
-                receipt.transactionHash
+                txHash
             );
 
             console.log('\n=== BRIDGE COMPLETE ===');
             console.log('Final status:', status);
 
             return {
-                txHash: receipt.transactionHash,
+                txHash,
                 status
             };
         } catch (error) {
@@ -614,4 +709,4 @@ export class LiFiBridge {
             throw error;
         }
     }
-} 
+}
