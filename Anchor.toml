@@ -6,6 +6,7 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
+fee-collector = "DM9ddjxyyqHrQDChNSkuhW7gMHKJgutCeHPej2oTGXPW"
 oft = "HmN84fc4YAhvxF2WnP891XxZb3hoTL1PpjYHyiRXDCc9"
 
 [registry]
