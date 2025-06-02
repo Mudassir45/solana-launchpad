@@ -6,7 +6,7 @@ import { EndpointId } from '@layerzerolabs/lz-definitions';
 import { OAppEnforcedOption, OmniPointHardhat } from '@layerzerolabs/toolbox-hardhat';
 import { ExecutorOptionType } from '@layerzerolabs/lz-v2-utilities';
 import { generateConnectionsConfig } from '@layerzerolabs/metadata-tools';
-import { LiFiBridge } from './src/li-fi-bridge';
+import { LiFiBridge } from './li-fi-bridge';
 import dotenv from 'dotenv';
 
 // Load environment variables
