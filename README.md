@@ -96,94 +96,49 @@ Each step is tracked and reported in the response, allowing for easy monitoring 
 
 ### 2. Cross-Chain Transfer (LayerZero)
 
-from Solana to EVM cross-chain transfer of Layer zero OFTs:
+POST /api/cross-chain-transfer
 
+#### Solana to EVM cross-chain transfer of LayerZero OFTs:
 Parameters:
+- `fromChain`: "solana"
+- `toChain`: destination EVM chain (e.g., "arbitrum-sepolia")
 - `amount`: Amount of tokens to transfer
-- `from-eid`: Source chain endpoint ID (40168 for Solana devnet)
-- `to`: Destination address on Solana
+- `to`: Destination EVM address
 - `mint`: SPL token mint address
 - `escrow`: OFT escrow contract address
-- `to-eid`: Destination chain endpoint ID (40231 for Arbitrum-Sepolia Testnet)
+- `toEid`: Destination chain endpoint ID (e.g., "40168" for Arbitrum-Sepolia)
 
-```bash
-pnpm hardhat lz:oft:solana:send \
-```
-
-from EVM to Solana cross-chain transfer of Layer zero OFTs:
-```bash
-pnpm hardhat --network sepolia-testnet send --dst-eid 40168 --amount <AMOUNT> --to <TO>
-```
-
-### 3. Li-Fi Bridge Transfer
-```bash
-POST /api/li-fi-bridge
+Example:
+```json
 {
-    "fromChain": "42161",  // Arbitrum
-    "toChain": "1151111081099710",  // Solana
-    "fromToken": "ETH",
-    "toToken": "SOL",
-    "amount": "1000000000000000000",  // 1 ETH in wei
-    "fromAddress": "your_address",
-    "to": "destination_address"  // Optional
+  "fromChain": "solana",
+  "toChain": "arbitrum-sepolia",
+  "amount": "100",
+  "to": "0xEvmRecipient",
+  "mint": "So1anaMintAddress",
+  "escrow": "So1anaEscrowAddress",
+  "toEid": "40168"
 }
 ```
 
-## Features
+#### EVM to Solana cross-chain transfer of LayerZero OFTs:
+Parameters:
+- `fromChain`: source EVM chain (e.g., "sepolia")
+- `toChain`: "solana"
+- `amount`: Amount of tokens to transfer
+- `to`: Destination Solana address
+- `contractAddress`: OFT contract address on EVM
 
-### LayerZero OFT Integration
-- Native cross-chain token transfers
-- Automated contract deployment
-- Configurable gas limits and execution parameters
-- Support for multiple EVM chains and Solana
+Example:
+```json
+{
+  "fromChain": "sepolia",
+  "toChain": "solana",
+  "amount": "100",
+  "to": "DEST_SOL_ADDRESS",
+  "contractAddress": "0xYourOFTAddress"
+}
+```
 
-### Li-Fi Bridge Integration
-- Aggregated bridge solutions
-- Support for multiple tokens and chains
-- Automatic token allowance management
-- Real-time quote fetching
-- Transaction status tracking
-
-## Deployment Process
-
-1. **Token Creation**
-   - Creates the initial token on Solana
-   - Sets up the OFT store account
-   - Configures token metadata
-
-2. **Chain Deployment**
-   - Deploys contracts on specified chains
-   - Configures cross-chain messaging
-   - Sets up token metadata
-
-3. **Bridge Configuration**
-   - Updates LayerZero configuration
-   - Sets up Li-Fi bridge connections
-   - Configures security parameters
-
-## Security Considerations
-
-1. **Private Keys**: Never commit private keys to the repository
-2. **Gas Limits**: Configure appropriate gas limits for each network
-3. **Access Control**: Implement proper access control for token operations
-4. **Cross-Chain Security**: Verify message authenticity on receiving chains
-5. **Bridge Security**: Validate bridge transactions and quotes
-
-## Troubleshooting
-
-Common issues and solutions:
-
-1. **Transaction Failures**
-   - Check gas limits
-   - Verify network connectivity
-   - Ensure sufficient funds for gas
-
-2. **Bridge Issues**
-   - Verify token allowances
-   - Check bridge liquidity
-   - Validate quote parameters
-
-3. **Cross-Chain Message Failures**
-   - Verify endpoint configurations
-   - Check enforced options
-   - Validate message parameters
+### 3. Li-Fi Bridge Transfer
+```
