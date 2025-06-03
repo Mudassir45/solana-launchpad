@@ -8,6 +8,7 @@ import { ExecutorOptionType } from '@layerzerolabs/lz-v2-utilities';
 import { generateConnectionsConfig } from '@layerzerolabs/metadata-tools';
 import { LiFiBridge } from './li-fi-bridge';
 import dotenv from 'dotenv';
+import path from 'path';
 
 // Load environment variables
 dotenv.config();
@@ -60,8 +61,13 @@ interface ChainConfig {
 const SUPPORTED_CHAINS: { [key: string]: ChainConfig } = {
     'arbitrum': {
         eid: EndpointId.ARBITRUM_V2_MAINNET,
-        name: 'Arbitrum One',
+        name: 'Arbitrum One mainnet',
         network: 'arbitrum'
+    },
+    'base': {
+        eid: EndpointId.BASE_V2_MAINNET,
+        name: 'Base mainnet',
+        network: 'base'
     },
     'arbitrum-sepolia': {
         eid: EndpointId.ARBSEP_V2_TESTNET,
@@ -310,7 +316,7 @@ const createTokenHandler: RequestHandler = async (req: Request, res: Response): 
             await runInteractiveCommandWithRetry('pnpm', [
                 'hardhat',
                 'lz:oft:solana:create',
-                '--eid', '40168',
+                '--eid', '40168', // 30168 for mainnet
                 '--program-id', 'HmN84fc4YAhvxF2WnP891XxZb3hoTL1PpjYHyiRXDCc9',
                 '--name', mintName,
                 '--symbol', mintSymbol,
@@ -435,28 +441,32 @@ interface CrossChainTransferRequest {
     toChain: string;
     amount: string;
     to: string;
+    contractAddress?: string; // For EVM->Solana
+    mint?: string; // For Solana->EVM
+    escrow?: string; // For Solana->EVM
+    toEid?: string; // For Solana->EVM
 }
 
 // API endpoint for cross-chain transfers
 const crossChainTransferHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { fromChain, toChain, amount, to }: CrossChainTransferRequest = req.body;
+        const { fromChain, toChain, amount, to, contractAddress, mint, escrow, toEid }: CrossChainTransferRequest = req.body;
 
         // Validate chains
         if (fromChain === 'solana') {
             // Solana to EVM transfer
-            const chainInfo = SUPPORTED_CHAINS[toChain];
-            if (!chainInfo) {
-                throw new Error(`Unsupported destination chain: ${toChain}`);
+            if (!mint || !escrow || !toEid) {
+                throw new Error('Missing required parameters for Solana to EVM transfer: mint, escrow, toEid');
             }
-
             await runInteractiveCommandWithRetry('pnpm', [
                 'hardhat',
                 'lz:oft:solana:send',
                 '--amount', amount,
                 '--from-eid', '40168',
                 '--to', to,
-                '--to-eid', chainInfo.eid.toString()
+                '--mint', mint,
+                '--escrow', escrow,
+                '--to-eid', toEid
             ]);
         } else if (toChain === 'solana') {
             // EVM to Solana transfer
@@ -464,14 +474,17 @@ const crossChainTransferHandler: RequestHandler = async (req: Request, res: Resp
             if (!chainInfo) {
                 throw new Error(`Unsupported source chain: ${fromChain}`);
             }
-
+            if (!contractAddress) {
+                throw new Error('Missing contractAddress for EVM to Solana transfer');
+            }
             await runInteractiveCommandWithRetry('pnpm', [
                 'hardhat',
-                'lz:oft:solana:send',
+                '--network', chainInfo.network,
+                'send',
+                '--dst-eid', '40168',
                 '--amount', amount,
-                '--from-eid', chainInfo.eid.toString(),
                 '--to', to,
-                '--to-eid', '40168'
+                '--contract-address', contractAddress
             ]);
         } else {
             throw new Error(`Unsupported transfer direction: from ${fromChain} to ${toChain}`);
