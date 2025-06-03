@@ -46,7 +46,6 @@ The project currently supports the following networks:
 - Blast Sepolia (Endpoint ID: 40234)
 - Scroll Sepolia (Endpoint ID: 40235)
 - Unichain Sepolia (Endpoint ID: 40236)
-- Mumbai Testnet (Endpoint ID: 40109)
 
 ### Li-Fi Bridge Networks
 - Arbitrum One (Chain ID: 42161)
