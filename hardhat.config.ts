@@ -59,6 +59,16 @@ const config: HardhatUserConfig = {
         ],
     },
     networks: {
+        'arbitrum': {
+            eid: EndpointId.ARBITRUM_V2_MAINNET,
+            url: process.env.RPC_URL_SEPOLIA || 'https://arb-mainnet.g.alchemy.com/v2/YookT1zCaTk-1s0ONK18r3EZc8g2e9oC',
+            accounts,
+        },
+        'base': {
+            eid: EndpointId.BASE_V2_MAINNET,
+            url: process.env.RPC_URL_SEPOLIA || 'https://base-mainnet.g.alchemy.com/v2/YookT1zCaTk-1s0ONK18r3EZc8g2e9oC',
+            accounts,
+        },
         'sepolia-testnet': {
             eid: EndpointId.SEPOLIA_V2_TESTNET,
             url: process.env.RPC_URL_SEPOLIA || 'https://gateway.tenderly.co/public/sepolia',
