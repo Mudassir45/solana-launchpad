@@ -18,6 +18,7 @@ import { HardhatUserConfig, HttpNetworkAccountsUserConfig } from 'hardhat/types'
 import { EndpointId } from '@layerzerolabs/lz-definitions'
 
 import './tasks/index'
+import "./deploy/deploy-oft"
 
 // Set your preferred authentication method
 //

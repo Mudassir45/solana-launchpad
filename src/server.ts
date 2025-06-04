@@ -347,7 +347,13 @@ const createTokenHandler: RequestHandler = async (req: Request, res: Response): 
                     throw new Error(`Unsupported chain: ${chain}`);
                 }
                 console.log(`Deploying OFT on ${chain}...`);
-                await runInteractiveCommandWithRetry('npx', ['hardhat', 'deploy', '--network', chainInfo.network, '--tags', 'MyOFT']);
+                await runInteractiveCommandWithRetry('npx', [
+                    'hardhat',
+                    'deploy-oft',
+                    '--network', chainInfo.network,
+                    '--name', mintName,
+                    '--symbol', mintSymbol
+                ]);
                 progress.step2Completed[chain] = true;
                 console.log(`Deployment on ${chain} completed successfully`);
             } catch (error) {
