@@ -9,6 +9,10 @@ import { generateConnectionsConfig } from '@layerzerolabs/metadata-tools';
 import { LiFiBridge } from './li-fi-bridge';
 import dotenv from 'dotenv';
 import path from 'path';
+import { runCreateOFT } from './utils/runCreateOFT';
+import { runDeployOFT } from './utils/runDeployOFT';
+import { runInitConfig } from './utils/runInitConfig';
+import { runWire } from './utils/runWire';
 
 // Load environment variables
 dotenv.config();
@@ -268,36 +272,6 @@ interface TokenCreationProgress {
     oftStoreAddress?: string;
 }
 
-// Function to run interactive commands with retry
-async function runInteractiveCommandWithRetry(command: string, args: string[], maxRetries = 3): Promise<void> {
-    let lastError: Error | null = null;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            console.log(`Attempt ${attempt} of ${maxRetries}...`);
-            await runInteractiveCommand(command, args);
-            return; // Success, exit the retry loop
-        } catch (error) {
-            lastError = error as Error;
-            console.error(`Attempt ${attempt} failed:`, error);
-            
-            // If it's a transaction expiration error, wait before retrying
-            if (error instanceof Error && error.message.includes('TransactionExpiredBlockheightExceededError')) {
-                const waitTime = attempt * 5000; // Increase wait time with each retry
-                console.log(`Waiting ${waitTime/1000} seconds before retry...`);
-                await new Promise(resolve => setTimeout(resolve, waitTime));
-                continue;
-            }
-            
-            // For other errors, throw immediately
-            throw error;
-        }
-    }
-    
-    // If we've exhausted all retries, throw the last error
-    throw lastError;
-}
-
 // API endpoint to create a new token with cross-chain support
 const createTokenHandler: RequestHandler = async (req: Request, res: Response): Promise<void> => {
     const progress: TokenCreationProgress = {
@@ -310,23 +284,22 @@ const createTokenHandler: RequestHandler = async (req: Request, res: Response): 
     try {
         const { mintName, mintSymbol, totalTokens, mintUri, destinationChains }: TokenCreationRequest = req.body;
 
-        // Step 1: Create Solana OFT
+        // Step 1: Create Solana OFT (in-memory, stateless)
         console.log('Step 1: Creating Solana OFT...');
+        let oftResult;
         try {
-            await runInteractiveCommandWithRetry('pnpm', [
-                'hardhat',
-                'lz:oft:solana:create',
-                '--eid', '40168', // 30168 for mainnet
-                '--program-id', 'HmN84fc4YAhvxF2WnP891XxZb3hoTL1PpjYHyiRXDCc9',
-                '--name', mintName,
-                '--symbol', mintSymbol,
-                '--amount', totalTokens,
-                '--uri', mintUri,
-                '--only-oft-store', 'true',
-                '--compute-unit-price-scale-factor', '200'
-            ]);
+            oftResult = await runCreateOFT({
+                eid: '40168', // 30168 for mainnet
+                programId: 'HmN84fc4YAhvxF2WnP891XxZb3hoTL1PpjYHyiRXDCc9',
+                name: mintName,
+                symbol: mintSymbol,
+                amount: totalTokens,
+                uri: mintUri,
+                onlyOftStore: true,
+                computeUnitPriceScaleFactor: '200'
+            });
             progress.step1Completed = true;
-            console.log('Step 1 completed successfully');
+            console.log('Step 1 completed successfully', oftResult);
         } catch (error) {
             console.error('Step 1 failed:', error);
             res.status(500).json({
@@ -338,8 +311,9 @@ const createTokenHandler: RequestHandler = async (req: Request, res: Response): 
             return;
         }
 
-        // Step 2: Deploy OFTs on destination chains
+        // Step 2: Deploy OFTs on destination chains (in-memory, stateless)
         console.log('Step 2: Deploying OFTs on destination chains...');
+        const evmDeployments: { [chain: string]: any } = {};
         for (const chain of destinationChains) {
             try {
                 const chainInfo = SUPPORTED_CHAINS[chain];
@@ -347,15 +321,13 @@ const createTokenHandler: RequestHandler = async (req: Request, res: Response): 
                     throw new Error(`Unsupported chain: ${chain}`);
                 }
                 console.log(`Deploying OFT on ${chain}...`);
-                await runInteractiveCommandWithRetry('npx', [
-                    'hardhat',
-                    'deploy-oft',
-                    '--network', chainInfo.network,
-                    '--name', mintName,
-                    '--symbol', mintSymbol
-                ]);
+                evmDeployments[chain] = await runDeployOFT({
+                    network: chainInfo.network,
+                    name: mintName,
+                    symbol: mintSymbol
+                });
                 progress.step2Completed[chain] = true;
-                console.log(`Deployment on ${chain} completed successfully`);
+                console.log(`Deployment on ${chain} completed successfully`, evmDeployments[chain]);
             } catch (error) {
                 console.error(`Deployment on ${chain} failed:`, error);
                 res.status(500).json({
@@ -368,56 +340,116 @@ const createTokenHandler: RequestHandler = async (req: Request, res: Response): 
             }
         }
 
-        // Step 3: Update and initialize config for each network
+        // Step 3: Update and initialize config (stateless, in-memory)
         console.log('Step 3: Updating and initializing config...');
+        let configContent;
         try {
             const solanaContract: OmniPointHardhat = {
                 eid: EndpointId.SOLANA_V2_TESTNET,
-                address: '', // This will be populated by getOftStoreAddress
+                address: oftResult.oftStore, // Use the address from step 1
             };
-            await updateLayerZeroConfig(solanaContract, destinationChains);
-            
-            // First initialize Solana configuration with explicit eid
-            console.log('Initializing Solana configuration...');
-            await runInteractiveCommandWithRetry('pnpm', [
-                'hardhat',
-                'lz:oft:solana:init-config',
-                '--oapp-config',
-                'layerzero.config.ts'
-            ]);
-            await new Promise(resolve => setTimeout(resolve, 5000));
 
-            // Then wire each network
-            for (const chain of destinationChains) {
+            // Generate config content in memory
+            const chainConfigs = destinationChains.map(chain => {
                 const chainInfo = SUPPORTED_CHAINS[chain];
-                console.log(`Wiring configuration for ${chain}...`);
-                await runInteractiveCommandWithRetry('pnpm', [
-                    'hardhat',
-                    'lz:oapp:wire',
-                    '--oapp-config',
-                    'layerzero.config.ts',
-                    '--network',
-                    chainInfo.network
-                ]);
-                // Wait between wiring operations
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-            
+                return {
+                    eid: chainInfo.eid,
+                    contractName: 'MyOFT',
+                    address: evmDeployments[chain].address // Use the deployed contract address
+                };
+            });
+
+            // Generate connections configuration
+            const connections = await generateConnectionsConfig(
+                chainConfigs.map(chainConfig => [
+                    chainConfig,
+                    solanaContract,
+                    [['LayerZero Labs'], []],
+                    [15, 32],
+                    [SOLANA_ENFORCED_OPTIONS, EVM_ENFORCED_OPTIONS],
+                ])
+            );
+
+            // Create config content
+            configContent = `
+import { EndpointId } from '@layerzerolabs/lz-definitions'
+import { ExecutorOptionType } from '@layerzerolabs/lz-v2-utilities'
+import { generateConnectionsConfig } from '@layerzerolabs/metadata-tools'
+import { OAppEnforcedOption, OmniPointHardhat } from '@layerzerolabs/toolbox-hardhat'
+
+const solanaContract: OmniPointHardhat = {
+    eid: EndpointId.SOLANA_V2_TESTNET,
+    address: "${solanaContract.address}",
+}
+
+${chainConfigs.map((config, index) => `
+const chain${index}: OmniPointHardhat = {
+    eid: ${config.eid},
+    contractName: 'MyOFT',
+    address: "${config.address}",
+}`).join('\n')}
+
+const EVM_ENFORCED_OPTIONS: OAppEnforcedOption[] = ${JSON.stringify(EVM_ENFORCED_OPTIONS, null, 4)}
+
+const SOLANA_ENFORCED_OPTIONS: OAppEnforcedOption[] = ${JSON.stringify(SOLANA_ENFORCED_OPTIONS, null, 4)}
+
+export default async function () {
+    const connections = await generateConnectionsConfig([
+        ${chainConfigs.map((_, index) => `
+        [
+            chain${index},
+            solanaContract,
+            [['LayerZero Labs'], []],
+            [15, 32],
+            [SOLANA_ENFORCED_OPTIONS, EVM_ENFORCED_OPTIONS],
+        ],`).join('\n')}
+    ])
+
+    return {
+        contracts: [
+            { contract: solanaContract },
+            ${chainConfigs.map((_, index) => `{ contract: chain${index} }`).join(',\n            ')}
+        ],
+        connections,
+    }
+}
+`;
+
+            // Initialize the config
+            const initConfigOutput = await runInitConfig(configContent);
             progress.step3Completed = true;
-            console.log('Step 3 completed successfully');
+            console.log('Config/init step completed successfully', initConfigOutput);
         } catch (error) {
             console.error('Step 3 failed:', error);
             res.status(500).json({
                 success: false,
-                error: 'Failed to update and initialize config',
+                error: 'Failed to initialize config',
                 progress,
                 details: error instanceof Error ? error.message : 'Unknown error'
             });
             return;
         }
 
-        // Remove Step 4 since wiring is now part of Step 3
+        // Step 4: Wire each network (stateless, in-memory)
+        try {
+            for (const chain of destinationChains) {
+                const chainInfo = SUPPORTED_CHAINS[chain];
+                if (!chainInfo) {
+                    throw new Error(`Unsupported chain: ${chain}`);
+                }
+                const wireOutput = await runWire(configContent, chainInfo.network);
+                console.log(`Wiring configuration for ${chain} completed successfully`, wireOutput);
+            }
         progress.step4Completed = true;
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to wire configuration',
+                progress,
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+            return;
+        }
 
         res.json({ 
             success: true, 
@@ -464,7 +496,7 @@ const crossChainTransferHandler: RequestHandler = async (req: Request, res: Resp
             if (!mint || !escrow || !toEid) {
                 throw new Error('Missing required parameters for Solana to EVM transfer: mint, escrow, toEid');
             }
-            await runInteractiveCommandWithRetry('pnpm', [
+            await runInteractiveCommand('pnpm', [
                 'hardhat',
                 'lz:oft:solana:send',
                 '--amount', amount,
@@ -483,7 +515,7 @@ const crossChainTransferHandler: RequestHandler = async (req: Request, res: Resp
             if (!contractAddress) {
                 throw new Error('Missing contractAddress for EVM to Solana transfer');
             }
-            await runInteractiveCommandWithRetry('pnpm', [
+            await runInteractiveCommand('pnpm', [
                 'hardhat',
                 '--network', chainInfo.network,
                 'send',

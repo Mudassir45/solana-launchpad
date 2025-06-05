@@ -131,7 +131,7 @@ async function main() {
     const programId = new PublicKey('HmN84fc4YAhvxF2WnP891XxZb3hoTL1PpjYHyiRXDCc9');
     
     // Example mint address (replace with your mint address)
-    const mintAddress = new PublicKey('GtBiSwyq3uzZKA8v3ah34nVCWKV6sSQYXWS88483UibW');
+    const mintAddress = new PublicKey('BFbpdwLr412A79N7CYrLZEB8G2xtyNF1LCV6x12PxbVy');
     
     try {
         console.log(`\nUsing ${network} network`);

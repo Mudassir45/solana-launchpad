@@ -327,13 +327,24 @@ task('lz:oft:solana:create', 'Mints new SPL Token and creates new OFT Store acco
                     `Please note that for MABA mode, you must carry out the change of Mint Authority before making any cross-chain transfers. For more details: https://github.com/LayerZero-Labs/devtools/tree/main/examples/oft-solana#for-oft-mint-and-burn-adapter-maba`
                 )
             }
-            saveSolanaDeployment(
-                eid,
-                programIdStr,
-                mint.publicKey,
-                mintAuthorityPublicKey.toBase58(),
-                escrowPK,
-                oftStorePda
-            )
+            console.log(JSON.stringify({
+                mint: toBase58String(mint.publicKey),
+                mintAuthority: toBase58String(mintAuthorityPublicKey),
+                escrow: toBase58String(escrowPK),
+                oftStore: toBase58String(oftStorePda)
+            }));
         }
     )
+
+function toBase58String(key: any): string {
+    if (key && typeof key.toBase58 === 'function') {
+        return key.toBase58();
+    }
+    // Try to convert using Umi adapter
+    try {
+        return toWeb3JsPublicKey(key).toBase58();
+    } catch {
+        // fallback: try .toString()
+        return key.toString();
+    }
+}
