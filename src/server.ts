@@ -81,7 +81,7 @@ const SUPPORTED_CHAINS: { [key: string]: ChainConfig } = {
     'sepolia': {
         eid: EndpointId.SEPOLIA_V2_TESTNET,
         name: 'Sepolia',
-        network: 'sepolia'
+        network: 'sepolia-testnet'
     },
     'base-v2-testnet': {
         eid: EndpointId.BASESEP_V2_TESTNET,
